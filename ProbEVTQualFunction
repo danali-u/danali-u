@@ -1,0 +1,225 @@
+travis_data_ms = readtable('patient_mat_mothership.csv');
+travis_psc = table2array(travis_data_ms(:,8))./3600;
+travis_csc = table2array(travis_data_ms(:,9))./3600;
+travis_tranf = table2array(travis_data_ms(:,10))./3600;
+
+lower = 10; %lower bound final infarction volumes
+upper = 220; %upper bound final infarction volumes
+
+n_total = 13000; %13000 for sig testing 
+
+
+%Sample volumes for LVO from beta distribution 
+n_LVO = .25 *  n_total; %sample size for LVO patients 
+a = 2; %beta "a" parameter
+b = 2; %3 %beta "b" parameter 
+V_infin_rand_LVO = randraw('beta',[lower,upper,a,b],n_LVO); %generate n_LVO final infarction volumes; "final volume" defined as infarction volume at t --> infinity
+
+
+%Pial Collaterals, LVO
+pc_LVO = (V_infin_rand_LVO - 220) .* (-11/220); 
+tau_LVO = (-0.0013 .* pc_LVO + 0.0179)*60;
+shifted_tau_LVO = (tau_LVO + (1/1.2 - median(tau_LVO))); %tau with a median of 1.2 
+
+
+%back_penumb = (((shifted_tau_LVO + median(tau_LVO) - (1/1.2))/60 - 0.0179)/-0.0013)*(220/-11)+220
+
+%LVO code below 
+
+p_reperfuse_tpa_LVO = 0.20; %probability of reperfusion for LVO patient receiving TPA 
+p_reperfuse_EVT = 0.74; %probability of reperfusion for LVO patient receiving EVT
+
+%pre-allocate data 
+V_ms_LVO = cell(length(travis_csc),1); %volume(t) for ms LVO path 
+V_dns_LVO = cell(length(travis_csc),1); %volume(t) for dns LVO path
+
+for i = 1:length(travis_csc) %for each individual block group
+    %the following are ms volume calculations for LVO patients
+    V_ms_LVO{i}(1:round(n_LVO*p_reperfuse_EVT)) = V_infin_rand_LVO(1:round(n_LVO*p_reperfuse_EVT)) .* (1-exp((travis_csc(i)+ 2.5).* -shifted_tau_LVO((1:round(n_LVO*p_reperfuse_EVT))))); %volume at travis_csc given reperfusion with EVT (86% of patients)
+    V_ms_LVO{i}(round(n_LVO*p_reperfuse_EVT) + 1:n_LVO) = V_infin_rand_LVO(round(n_LVO*p_reperfuse_EVT) + 1:n_LVO); %patients who don't reperfuse with EVT, take V_infin ...
+    V_ms_LVO_test{i} = V_infin_rand_LVO .* (1-exp((travis_csc(i)+ 2.5).* -shifted_tau_LVO));
+    if travis_psc(i) < travis_csc(i) && travis_psc(i) < 4.5
+        V_dns_LVO{i}(1:round(n_LVO * p_reperfuse_tpa_LVO)) = V_infin_rand_LVO(1:round(n_LVO * p_reperfuse_tpa_LVO)) .* (1-exp((travis_psc(i) + 2) .* -shifted_tau_LVO(1:round(n_LVO * p_reperfuse_tpa_LVO))));
+        V_dns_LVO{i}(round(n_LVO * p_reperfuse_tpa_LVO) + 1: round(n_LVO*(1-p_reperfuse_tpa_LVO)*p_reperfuse_EVT)) = V_infin_rand_LVO(round(n_LVO * p_reperfuse_tpa_LVO) + 1: round(n_LVO*(1-p_reperfuse_tpa_LVO)*p_reperfuse_EVT)) .* (1-exp((travis_psc(i) + travis_tranf(i) + 170/60) .* -shifted_tau_LVO(round(n_LVO * p_reperfuse_tpa_LVO) + 1: round(n_LVO*(1-p_reperfuse_tpa_LVO)*p_reperfuse_EVT))));
+        V_dns_LVO{i}(round(n_LVO*(1-p_reperfuse_tpa_LVO)*p_reperfuse_EVT) + 1: n_LVO) = V_infin_rand_LVO(round(n_LVO*(1-p_reperfuse_tpa_LVO)*p_reperfuse_EVT) + 1: n_LVO);
+       
+    else 
+        V_dns_LVO{i} = V_ms_LVO{i};
+    end 
+ 
+end 
+
+
+for i = 1:length(travis_csc)
+    p_EVT_ms(i) = length(find(V_ms_LVO_test{i} < 70))/length(V_ms_LVO_test{i});
+    p_EVT_dns(i) = length(find(V_dns_LVO{i} <= 70))/length(V_dns_LVO{i});
+end
+
+figure
+hist(p_EVT_ms)
+
+
+%Code below computes probability of being EVT eligible by computing 
+tStart = cputime; 
+
+V_ms_LVO_test = V_infin_rand_LVO .* (1-exp((travis_csc + 2.5).* -shifted_tau_LVO));
+
+for i = 1:length(travis_csc)
+    prob_EVT_eligible(i) = length(find(V_ms_LVO_test(i,:) <= 70))/length(V_infin_rand_LVO);
+end 
+
+%figure
+%hist(prob_EVT_eligible)
+
+tEnd = cputime - tStart
+
+
+
+[slope intercept] = logfit(time,p_EVT_eligible2)
+
+
+
+
+
+
+
+
+travis_data_ms = readtable('patient_mat_mothership.csv');
+travis_psc = table2array(travis_data_ms(:,8))./3600;
+travis_csc = table2array(travis_data_ms(:,9))./3600;
+travis_tranf = table2array(travis_data_ms(:,10))./3600;
+
+lower = 10; %lower bound final infarction volumes
+upper = 220; %upper bound final infarction volumes
+
+n_total = 13000; %13000 for sig testing 
+
+
+%Sample volumes for LVO from beta distribution 
+n_LVO = .25 *  n_total; %sample size for LVO patients 
+a = 2; %beta "a" parameter
+b = 2; %3 %beta "b" parameter 
+V_infin_rand_LVO = randraw('beta',[lower,upper,a,b],n_LVO); %generate n_LVO final infarction volumes; "final volume" defined as infarction volume at t --> infinity
+
+
+%Pial Collaterals, LVO
+pc_LVO = (V_infin_rand_LVO - 220) .* (-11/220); 
+tau_LVO = (-0.0013 .* pc_LVO + 0.0179)*60;
+shifted_tau_LVO = (tau_LVO + (1/1.2 - median(tau_LVO))); %tau with a median of 1.2 
+
+%Given we have a distribution of LVO volumes with n = 3250, we have a
+%corresponding distribution of tau's with a one-one mapping. 
+
+tStart = cputime;
+
+tau = 1./shifted_tau_LVO; %housekeeping 
+
+pos_vp = V_infin_rand_LVO(V_infin_rand_LVO >=70); %take all penumbra volumes that are greater than 70 
+
+ons_core = -tau(V_infin_rand_LVO >= 70) .* log(-70./pos_vp + 1); %solves for onset-to-treatment time needed for a given penumbra to achieve 70 mL core volume 
+
+% figure
+% scatter(pos_vp, ons_core) %visualize with '3250 bins' i.e. we are creating a discrete plot with each penumbra volume we originally generated  
+% xlabel('Penumbra Volume') 
+% ylabel('Onset-to-treatment time needed for 70 mL core volume')
+
+
+%Code below plots for 'infinite bins' i.e. we have a continuous function  
+%code is useful for backtracking and determining penumbra volumes that correspond to a
+%given onset_to_treatment time 
+fun = @(vp) -1./(((-0.0013)*(vp -220)*(-11/220)+0.0179)*60 + (1/1.2) - median(tau_LVO)) .* log(-70./vp + 1);
+v = 71:0.1:220;
+% figure
+% plot(v,fun(v))
+% xlabel('Penumbra Volume') 
+% ylabel('Onset-to-treatment time needed for 70 mL core volume')
+
+prob_underseventy = length(find(V_infin_rand_LVO < 70)) / length(V_infin_rand_LVO); %probability that a given LVO pos patient has penumbra volume < 70 
+
+%discrete plot pros: very easy to compute the probability by counting, and
+%we can increase n to be large enough (though would cost more time) that probability calculations would be
+%essentially equal to the infinite case.
+
+
+
+% time = [linspace(0.5,1.5,4) linspace(1.8, 6.48, 6)];
+% 
+% cutoff_penumbs = interp1(fun(v),v,time); %this generates "cutoff penumbra volume" based on onset-to-treatment times i.e. every data point to the right of this value on the plot informs our probability of >70 mL
+% 
+% for i = 1:length(time) 
+%     prob_greaterseventy(i) = length(find(pos_vp <= cutoff_penumbs(i)))/length(V_infin_rand_LVO); %generates probability that patient is greater than cutoff volume for each onset-to-treatment time
+% end 
+% 
+% p_EVT_eligible2 = prob_underseventy + prob_greaterseventy; %final probability value
+% 
+% scatter(time,p_EVT_eligible2, 'DisplayName', 'Data Points Used for Approx');
+% 
+% pp = spline(time,p_EVT_eligible2); 
+% 
+% vals = ppval(pp,time)
+% hold on 
+% plot(time,ppval(pp,time), 'DisplayName', 'Approximate Solution');
+
+
+
+time = linspace(0.5,10,200);
+
+cutoff_penumbs = interp1(fun(v),v,time); %this generates "cutoff penumbra volume" based on onset-to-treatment times i.e. every data point to the right of this value on the plot informs our probability of >70 mL
+
+for i = 1:length(time) 
+    prob_greaterseventy(i) = length(find(pos_vp <= cutoff_penumbs(i)))/length(V_infin_rand_LVO); %generates probability that patient is greater than cutoff volume for each onset-to-treatment time
+end 
+p_EVT_eligible2 = prob_underseventy + prob_greaterseventy; %final probability value
+
+% 
+% plot(time,p_EVT_eligible2, 'DisplayName', 'Exact Solution')
+% lgd = legend; 
+% 
+
+
+% [slope, intercept, R2] = logfit(time,p_EVT_eligible2,'loglog')
+% yApprox = (10^intercept)*time.^(slope);
+% yApprox(yApprox < 0.2095) = 0.2095;
+% plot(time,yApprox,'DisplayName', 'Power Law Approx: 10^{-0.321} * t^{-0.423}')
+% hold on
+% plot(time,p_EVT_eligible2);
+
+
+x = time';
+y = p_EVT_eligible2';
+
+g = fittype('a-b*exp(-c*x)');
+f0 = fit(x,y,g,'StartPoint',[[ones(size(x)), -exp(-x)]\y; 1]);
+xx = linspace(0.5,10,200);
+plot(x,y,'o',xx,f0(xx),'r-');
+
+
+
+fun2= @(x) 0.2 +1.068*exp(-1.07 *x);
+
+plot(x, fun2(x), 'DisplayName', 'Exponential fn: 0.2 + 1.068e^{-1.07x}')
+hold on;
+
+plot(time,p_EVT_eligible2, 'DisplayName', 'Exact Solution')
+xlabel('time to treatment (hrs)')
+ylabel('Probability of Qualifying for EVT')
+lgd = legend
+
+
+% hold on
+% plot(time,prob_EVT_eligible2,'DisplayName','Desired Curve');
+% xlabel('Onset to Treatment Time (hrs)')
+% ylabel('Probability of Qualifying for EVT')
+
+% p = polyfit(time,prob_EVT_eligible2,10)
+% 
+% f = polyval(p,time);
+% plot(f,'DisplayName','Polynomial Interpolation Approx')
+% lgd = legend;
+
+% tEnd = cputime - tStart
+
+% pp = interp1(time,prob_EVT_eligible2,'linear','pp')
+% 
+% figure
+% hist(prob_EVT_eligible2)

@@ -1,0 +1,184 @@
+function [probability_go_ms_travis, probability_go_dns_travis] = PaydarfarStrokeModelOutcomes(~)
+
+
+%Read-in Data in hours
+
+travis_data_ms = readtable('patient_mat_mothership.csv');
+travis_psc = table2array(travis_data_ms(:,8))./3600;
+travis_csc = table2array(travis_data_ms(:,9))./3600;
+travis_tranf = table2array(travis_data_ms(:,10))./3600;
+
+onset_fmr = 30/60; 
+amb_onscene = 30/60;
+dtn_psc = 30/60; 
+ntd = 20/60;
+dtn_csc = 30/60;
+dtp_ms = 60/60;
+dtp_dns = 30/60; 
+
+pre_hospital = onset_fmr + amb_onscene; 
+
+
+lower = 10; %lower bound final infarction volumes
+upper = 220; %upper bound final infarction volumes
+
+n_total = 13000; %13000 for reliable sig testing 
+
+
+%Sample volumes for LVO 
+n_LVO = .25 *  n_total; %sample size for LVO patients 
+a = 2; %beta "a" parameter
+b = 2; %3 %beta "b" parameter 
+V_infin_rand_LVO = randraw('beta',[lower,upper,a,b],n_LVO); %generate n_LVO final infarction volumes; "final volume" defined as infarction volume at t --> infinity
+
+%Sample volumes for Non-LVO  
+n_NLVO = .75 * n_total; %sample size for NLVO patients 
+a1 = 2; %beta "a" parameter
+b1 = 6; %; %beta "b" parameter, adjusted to skew right 
+V_infin_rand_NLVO = randraw('beta',[lower,upper,a1,b1],n_NLVO); %generate n_NLVO final infarction volumes
+
+%Pial Collaterals for LVO patients 
+pc_LVO = (V_infin_rand_LVO - 220) .* (-11/220); 
+tau_LVO = (-0.0013 .* pc_LVO + 0.0179)*60;
+shifted_tau_LVO = (tau_LVO + (1/1.2 - median(tau_LVO))); %tau distribution with a median of 1.2 
+
+%NLVO tau
+% shifted_tau_NLVO = 1/max(1./shifted_tau_LVO); %slowest LVO tau 
+shifted_tau_NLVO = 1/min(1./shifted_tau_LVO); %fastest LVO tau
+
+
+% Non-LVO code below (NLVO)
+
+%pre-allocate data 
+V_ms_NLVO = cell(length(travis_csc),1); %volume(t) for ms NLVO path
+V_dns_NLVO = cell(length(travis_csc),1); %volume(t) for dns NLVO path
+mRS_ms_NLVO = cell(length(travis_csc),1); %non-rounded mRS(t) for ms NLVO path
+mRS_dns_NLVO = cell(length(travis_csc),1); %non-rounded mRS(t) for dns NLVO path
+
+%Warach et al 
+p_rep_spont = 0.05;  %probability of spontaneous, natural reperfusion given an NLVO but before receiving TPA treatment 
+p_rep_tpa = 0.41; %probability of reperfusion NLVO given TPA over short time course 
+p_rep_natural = 0.54; %probability of reperfusion given TPA but over longer time course
+
+for i = 1:length(travis_csc) %non-LVO MS and DNS calculations for each centroid
+    %ms volume calculations 
+        V_ms_NLVO{i}(1:round(n_NLVO * p_rep_spont)) = V_infin_rand_NLVO(1:round(n_NLVO * p_rep_spont)) .* (1-exp((travis_csc(i)).* -shifted_tau_NLVO)); %core volume of ms NLVO patients who spontaneously reperfuse before tpa is given 
+        V_ms_NLVO{i}(round(n_NLVO * p_rep_spont + 1):round(n_NLVO * (p_rep_tpa + p_rep_spont))) = V_infin_rand_NLVO(round(n_NLVO * p_rep_spont + 1):round(n_NLVO * (p_rep_tpa + p_rep_spont))) .* (1-exp((travis_csc(i) + pre_hospital + dtn_csc).* -shifted_tau_NLVO)); %core volume of ms NLVO patients who reperfuse with tpa via "fast path". Assumes reperfusion occurs exactly when treatment is given. 
+        V_ms_NLVO{i}(round(n_NLVO * (p_rep_tpa + p_rep_spont)+1):n_NLVO) = V_infin_rand_NLVO(round(n_NLVO * (p_rep_tpa + p_rep_spont)+1):n_NLVO); %core volume of ms NLVO patients that don't reperfuse with tpa
+   
+    %dns volume calculations 
+    if travis_psc(i) < travis_csc(i) && (travis_psc(i) + pre_hospital) < 4.5 %if primary center is closer than comprehensive and onset-arrival within 4.5 hours, then DNS 
+        V_dns_NLVO{i}(1:round(n_NLVO * p_rep_spont)) = V_infin_rand_NLVO(1:round(n_NLVO * p_rep_spont)) .* (1-exp((travis_psc(i)).* -shifted_tau_NLVO)); %core volume of dns NLVO patients who spontaneously reperfuse before tpa is given 
+        V_dns_NLVO{i}(round(n_NLVO * p_rep_spont + 1):round(n_NLVO * (p_rep_tpa + p_rep_spont))) = V_infin_rand_NLVO(round(n_NLVO * p_rep_spont + 1):round(n_NLVO * (p_rep_tpa + p_rep_spont))) .* (1-exp((travis_psc(i) + pre_hospital + dtn_psc).* -shifted_tau_NLVO)); %core volume dns NLVO patients who reperfuse with tpa via "fast path". Assumes reperfusion occurs exactly when treatment is given. 
+        V_dns_NLVO{i}(round(n_NLVO * (p_rep_tpa + p_rep_spont)+1):n_NLVO) = V_infin_rand_NLVO(round(n_NLVO * (p_rep_tpa + p_rep_spont)+1):n_NLVO); 
+    
+    end
+    
+    %Conditions for tpa 
+    for j = 1:length(V_infin_rand_NLVO)
+        
+        if (travis_csc(i) + pre_hospital) > 4.5 %if the comprehensive center is further 4.5 hrs away, can't use tpa to treat
+            V_ms_NLVO{i}(j) = V_infin_rand_NLVO(j); %ms volume = V_infin ... 
+        end 
+        
+        if travis_psc(i) >= travis_csc(i) || (travis_psc(i) + pre_hospital) >= 4.5 %If the primary center is further than the comprehensive or time to primary longer than 4.5 hrs 
+            V_dns_NLVO{i}(j) = V_ms_NLVO{i}(j); %Dns volume = ms volume 
+        end 
+        
+          
+       %Volume to mRS conversion below  
+       
+        mRS_ms_NLVO{i}(j) =  0.0376 * V_ms_NLVO{i}(j); %mid
+%         mRS_NLVO{i}(j) =  0.0500 * V_ms_NLVO{i}(j); %lower 
+%         mRS_NLVO{i}(j) =  0.0301 * V_ms_NLVO{i}(j); %upper 
+       
+       
+        mRS_dns_NLVO{i}(j) =  0.0376 * V_dns_NLVO{i}(j); %mid
+%         mRS_dns_NLVO{i}(j) =  0.0500 * V_dns_NLVO{i}(j); %lower
+%         mRS_dns_NLVO{i}(j) =  0.0301 * V_dns_NLVO{i}(j); %upper
+       
+       if mRS_ms_NLVO{i}(j) > 6
+           mRS_ms_NLVO{i}(j) = 6;
+       end
+             
+       
+       if mRS_dns_NLVO{i}(j) > 6
+           mRS_dns_NLVO{i}(j) = 6;
+       end
+       
+    end 
+   
+end 
+
+
+%LVO code below 
+
+p_reperfuse_tpa_LVO = 0.20; %probability of reperfusion for LVO patient receiving TPA 
+p_reperfuse_EVT = 0.74; %probability of reperfusion for LVO patient receiving EVT
+
+%pre-allocate data 
+V_ms_LVO = cell(length(travis_csc),1); %volume(t) for ms LVO path 
+V_dns_LVO = cell(length(travis_csc),1); %volume(t) for dns LVO path
+mRS_ms_LVO = cell(length(travis_csc),1); %non-rounded mRS(t) for ms path
+mRS_dns_NLVO = cell(length(travis_csc),1); %non-rounded mRS(t) for dns path
+
+%Pre-allocate: Combine LVO and NLVO paths into one for ms vs dns significance testing 
+mRS_concat_dns = cell(length(travis_csc),1); %combined non-rounded dns path
+mRS_concat_ms = cell(length(travis_csc),1); %combined non-rounded ms path
+
+for i = 1:length(travis_csc) %for each individual block group
+    %the following are ms volume calculations for LVO patients
+    V_ms_LVO{i}(1:round(n_LVO*p_reperfuse_EVT)) = V_infin_rand_LVO(1:round(n_LVO*p_reperfuse_EVT)) .* (1-exp((travis_csc(i)+ pre_hospital + dtp_ms).* -shifted_tau_LVO((1:round(n_LVO*p_reperfuse_EVT))))); %core volume at travis_csc given reperfusion with EVT (74% of patients)
+    V_ms_LVO{i}(round(n_LVO*p_reperfuse_EVT) + 1:n_LVO) = V_infin_rand_LVO(round(n_LVO*p_reperfuse_EVT) + 1:n_LVO); %patients who don't reperfuse with EVT, take V_infin ...
+
+    %the following are dns volume calculations for LVO patients
+    if travis_psc(i) < travis_csc(i) && (travis_psc(i)+pre_hospital) < 4.5
+        V_dns_LVO{i}(1:round(n_LVO * p_reperfuse_tpa_LVO)) = V_infin_rand_LVO(1:round(n_LVO * p_reperfuse_tpa_LVO)) .* (1-exp((travis_psc(i) + pre_hospital + dtn_psc) .* -shifted_tau_LVO(1:round(n_LVO * p_reperfuse_tpa_LVO))));
+        V_dns_LVO{i}(round(n_LVO * p_reperfuse_tpa_LVO) + 1: round(n_LVO*(1-p_reperfuse_tpa_LVO)*p_reperfuse_EVT)) = V_infin_rand_LVO(round(n_LVO * p_reperfuse_tpa_LVO) + 1: round(n_LVO*(1-p_reperfuse_tpa_LVO)*p_reperfuse_EVT)) .* (1-exp((travis_psc(i) + travis_tranf(i) + pre_hospital+dtn_psc + ntd + dtp_dns) .* -shifted_tau_LVO(round(n_LVO * p_reperfuse_tpa_LVO) + 1: round(n_LVO*(1-p_reperfuse_tpa_LVO)*p_reperfuse_EVT))));
+        V_dns_LVO{i}(round(n_LVO*(1-p_reperfuse_tpa_LVO)*p_reperfuse_EVT) + 1: n_LVO) = V_infin_rand_LVO(round(n_LVO*(1-p_reperfuse_tpa_LVO)*p_reperfuse_EVT) + 1: n_LVO);
+       
+    else 
+        V_dns_LVO{i} = V_ms_LVO{i};
+    end 
+   
+    for j = 1:length(V_infin_rand_LVO)  
+        
+       %the following are volume to mRS conversions 
+       mRS_ms_LVO{i}(j) =  0.0376 * V_ms_LVO{i}(j); %middle
+%        mRS{i}(j) =  0.0500 * V_ms_LVO{i}(j); %lower
+%        mRS{i}(j) =  0.0301 * V_ms_LVO{i}(j); %upper
+       
+       mRS_dns_NLVO{i}(j) =  0.0376 * V_dns_LVO{i}(j); %middle 
+%        mRS_dns{i}(j) =  0.0500 * V_dns_LVO{i}(j); %lower
+%        mRS_dns{i}(j) =  0.0301 * V_dns_LVO{i}(j); %upper
+
+       
+
+       
+       if mRS_ms_LVO{i}(j) > 6
+           mRS_ms_LVO{i}(j) = 6;
+       end
+       
+       
+       if mRS_dns_NLVO{i}(j) > 6
+           mRS_dns_NLVO{i}(j) = 6;
+       end
+       
+
+    end 
+    
+    mRS_concat_dns{i} = [mRS_dns_NLVO{i} mRS_dns_NLVO{i}];
+    
+    mRS_concat_ms{i} = [mRS_ms_LVO{i} mRS_ms_NLVO{i}];
+ 
+end 
+
+
+for i = 1:length(travis_csc)
+    probability_go_ms_travis(i) = length(find(mRS_concat_ms{i} <= 2))/length(mRS_concat_ms{i});
+    probability_go_dns_travis(i) = length(find(mRS_concat_dns{i} <= 2))/length(mRS_concat_dns{i});
+end 
+
+end 
+
+

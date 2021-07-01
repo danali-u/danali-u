@@ -1,0 +1,130 @@
+for i = 1:20
+    [probability_go_ms_travis,probability_go_dns_travis] = mytravisrestoreV2();
+    p_go_ms_mat(i,:) = probability_go_ms_travis;
+    p_go_dns_mat(i,:) = probability_go_dns_travis;
+end 
+
+
+travis_data_ms = readtable('patient_mat_mothership.csv');
+travis_data_dns = readtable('patient_mat_drip_and_ship.csv');
+travis_psc = table2array(travis_data_ms(:,8))./3600;
+travis_csc = table2array(travis_data_ms(:,9))./3600;
+
+z = find(travis_csc > travis_psc);
+byp = (travis_csc - travis_psc)'*60;
+p_go_dns_mat_all = p_go_dns_mat(:,z);
+p_go_ms_mat_all = p_go_ms_mat(:,z);
+byp_z = byp(z);
+
+%calculate p-vals with 2 sample KS test and ttest
+for i = 1:length(z) %loop through each block group and compute 1-sided tail end significance between ms and dns for only LVO patients  
+    pval_p_go_ms(i) = kstest2(p_go_ms_mat_all(:,i),p_go_dns_mat_all(:,i),'tail','smaller','alpha',0.01);
+    pval_p_go_dns(i) = kstest2(p_go_ms_mat_all(:,i),p_go_dns_mat_all(:,i),'tail','larger','alpha',0.01);
+    pval_ttest_pgo_ms(i) = ttest2(p_go_dns_mat_all(:,i), p_go_ms_mat_all(:,i), 0.01);
+end 
+
+
+sig_ttest_sig_ms = find(pval_ttest_pgo_ms == 1);
+count_ttest_sig_ms = length(sig_ttest_sig_ms);
+
+sig_p_go_ms = find(pval_p_go_ms==1);
+count_p_go_ms = length(sig_p_go_ms);
+non_sig_p_go_ms = find(pval_p_go_ms == 0);
+
+sig_p_go_dns = find(pval_p_go_dns==1);
+count_p_go_dns = length(sig_p_go_dns);
+non_sig_p_go_dns = find(pval_p_go_dns == 0);
+
+
+for i = 1:length(sig_p_go_ms)
+    d_ms(i) = abs(computeCohen_d(p_go_ms_mat_all(:,sig_p_go_ms(i)),p_go_dns_mat_all(:,sig_p_go_ms(i)),'independent')); %'paired' argument used instead of 'independent' because ms & dns mRS distributions drawn from same sample populaton 
+end
+
+for i = 1:length(sig_p_go_dns)
+    d_dns(i) = abs(computeCohen_d(p_go_ms_mat_all(:,sig_p_go_dns(i)),p_go_dns_mat_all(:,sig_p_go_dns(i)),'independent')); %'paired' argument used instead of 'independent' because ms & dns mRS distributions drawn from same sample populaton
+end 
+
+
+lat = table2array(travis_data_ms(:,2));
+lon = table2array(travis_data_ms(:,3));
+
+
+latz = lat(z);
+lonz = lon(z);
+
+nosig_common_indices = find((pval_p_go_dns == 0) & (pval_p_go_ms == 0));
+
+nosig_lat = latz(nosig_common_indices);
+nosig_lon = lonz(nosig_common_indices);
+
+nonsig_latzdns = latz(find(pval_p_go_dns == 0));
+nonsig_lonzdns = lonz(find(pval_p_go_dns == 0));
+
+sig_latzdns = latz(find(pval_p_go_dns==1)); 
+sig_lonzdns = lonz(find(pval_p_go_dns==1));
+
+alllatzdns = zeros(1,7690)';
+alllatzdns(1:length(sig_latzdns)) = sig_latzdns;
+alllatzdns(length(sig_latzdns) + 1:end) = nonsig_latzdns;
+
+
+alllonzdns = zeros(1,7690)';
+alllonzdns(1:length(sig_lonzdns)) = sig_lonzdns;
+alllonzdns(length(sig_lonzdns) + 1:end) = nonsig_lonzdns;
+
+dvals = zeros(7690,1);
+dvals(1:length(sig_latzdns)) = d_dns;
+
+
+nonsig_latzms = latz(find(pval_p_go_ms == 0));
+nonsig_lonzms = lonz(find(pval_p_go_ms == 0));
+
+sig_latzms = latz(find(pval_p_go_ms==1)); 
+sig_lonzms = lonz(find(pval_p_go_ms==1));
+
+alllatzms = zeros(1,7690)';
+alllatzms(1:length(sig_latzms)) = sig_latzms;
+alllatzms(length(sig_latzms) + 1:end) = nonsig_latzms;
+
+
+alllonzms = zeros(1,7690)';
+alllonzms(1:length(sig_lonzms)) = sig_lonzms;
+alllonzms(length(sig_lonzms) + 1:end) = nonsig_lonzms;
+
+dvalsms = zeros(7690,1);
+dvalsms(1:length(sig_latzms)) = d_ms;
+
+
+alllatz = zeros(1,7690)';
+alllonz = zeros(1,7690)';
+d = zeros(1,7690)';
+
+alllatz(1:length(sig_latzms)) = sig_latzms;
+alllatz(length(sig_latzms) + 1:(length(sig_latzms) + length(sig_latzdns))) = sig_latzdns;
+alllatz((length(sig_latzms) + length(sig_latzdns)) + 1:end) = nosig_lat;
+
+alllonz(1:length(sig_lonzms)) = sig_lonzms;
+alllonz(length(sig_lonzms) + 1:(length(sig_lonzms) + length(sig_lonzdns))) = sig_lonzdns;
+alllonz((length(sig_lonzms) + length(sig_lonzdns)) + 1:end) = nosig_lon;
+
+d(1:length(sig_latzms)) = d_ms;
+d(length(sig_latzms) + 1: (length(sig_lonzms) + length(sig_lonzdns))) = -d_dns;
+
+
+
+% csvwrite('heatmap_data_sigDNS_pgofast30DTP60DTNV2QGIS.csv', [sig_latzdns sig_lonzdns])
+
+% csvwrite('heatmap_data_sigMS_pgofast30DTP60DTNQGIS.csv', [sig_latzms sig_lonzms])
+
+% csvwrite('heatmap_data_nosigfast30DTP60DTNQGIS.csv', [nosig_lat nosig_lon])
+
+csvwrite('heatmap_data_sig_pgofastBernoullieffectV2qgis.csv', [alllatz alllonz d])
+
+
+
+CSC_closest = find(travis_csc < travis_psc); 
+heatmap_data_sig_p_go = [lat(CSC_closest) lon(CSC_closest)]; 
+csvwrite('heatmap_data_CSC_closest.csv',heatmap_data_sig_p_go )
+
+t = [lat lon]
+csvwrite('TravisCountyCoordinateGrid.csv',t)
